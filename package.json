@@ -1,0 +1,25 @@
+{
+  "name": "searchhub-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Unified search/research MCP aggregator with OAuth 2.1 server",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "bun run --watch src/server.ts",
+    "start": "bun run src/server.ts",
+    "check": "bunx tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "jose": "^5.9.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}
