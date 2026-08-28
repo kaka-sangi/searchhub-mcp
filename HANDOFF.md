@@ -5,158 +5,135 @@
 A unified OAuth-2.1-protected MCP server that aggregates 13 search/research providers
 behind a single bearer-authenticated endpoint. Lives at `C:\Users\PC\find\searchhub-mcp`.
 
-Public URL (planned): **https://meow.v244.net**
+**Public URL (LIVE): https://meow.v244.net**
 
-## Domain: meow.v244.net
+## Live Deploy Status (2026-08-28)
 
-- Current DNS: Cloudflare-proxied (104.21.46.206 / 172.67.141.202 / IPv6).
-  Returns 404 today (no service attached).
-- OpenShip cloudflare credential is `cred_cnUVqGgqqBiGJihs` (status `active`),
-  last verified 2026-08-28 — auto-configuring DNS through it should work.
-- Plan: OpenShip's `post_domains` with `hostname: "meow.v244.net"` +
-  `projectId: <searchhub-project>` + DNS provider `cloudflare` +
-  `autoConfigure: true`. The browser-based verification then auto-sets the
-  CNAME and issues SSL via OpenShip's edge.
+- **Project:** `proj_YJ6vi_WL9IN5FfAh` on ship.v244.net
+- **Service:** `svc_iHwevfhcU3UY9lPc` (compose `searchhub`, framework `docker-compose`)
+- **Domain:** `dom_b1S9YDXlcSJoaztX` — `meow.v244.net` (status `active`, SSL `active`, primary)
+- **Source:** `github.com/kaka-sangi/searchhub-mcp` @ `9a2895d`
+- **Container:** built from repo `Dockerfile`, `oven/bun:1.3.14-alpine` base
+- **Volume:** `searchhub_data:/app/data` (named, persistent SQLite)
+- **Auto-deploy:** ON (webhook registered on the GitHub repo)
 
-## What's built and verified locally
+## Verified End-to-End (live URL)
 
-- Bun+Hono server (`src/server.ts`) on port 3000 (smoke-tested on 3137).
-- OAuth 2.1 (RFC 7591 DCR, RFC 7636 PKCE S256+plain, RFC 8414 issuer metadata,
-  RFC 9728 protected resource metadata, RFC 7009 revocation) — `src/oauth/handler.ts`.
-- SQLite-backed store for clients, auth codes, access/refresh tokens, users — `src/store.ts`.
-- Hono JSX-rendered login page (auto-form, error display).
-- 13-provider registry: 8 cloud MCPs (exa, tavily, parallel, grep, deepwiki,
-  context7, ydc, firecrawl) + 5 OpenShip-deployed Git MCPs (camofox, koon,
-  google, openwebsearch, searxng) — `src/providers/registry.ts`.
-- Parallel fan-out client with 3s/req timeout + degraded `_error` markers
-  when an upstream is dead or 403s — `src/providers/client.ts`.
-- 5-minute tool-list cache (steady-state `tools/list` <300ms; cold ~2s).
-- Single bearer-auth gate on `/mcp` — 401 with `WWW-Authenticate` + resource
-  metadata link when token is missing — `src/mcp/jsonrpc.ts`.
+```bash
+curl https://meow.v244.net/healthz
+# {"ok":true,"providers":["exa","tavily","parallel","grep","deepwiki",
+#  "context7","ydc","firecrawl","camofox","koon","google",
+#  "openwebsearch","searxng"]}
 
-## Verified smoke tests (on this box)
+curl https://meow.v244.net/.well-known/oauth-authorization-server
+# RFC 8414 metadata, issuer=https://meow.v244.net
 
-1. `GET /healthz` → `{"ok":true,"providers":[13 ids]}`
-2. `GET /.well-known/oauth-authorization-server` → RFC 8414 metadata
-3. `GET /.well-known/oauth-protected-resource` → RFC 9728 metadata
-4. `POST /admin/signup` → user created
-5. `POST /oauth/register` (public PKCE client) → `client_id` returned
-6. `POST /oauth/authorize` with username/password → 302 redirect with code
-7. `POST /oauth/token` (authorization_code + PKCE verifier) → JWT access + opaque refresh
-8. `POST /mcp` `initialize` with bearer → 200 JSON-RPC
-9. `POST /mcp` `tools/list` with bearer → 17 tools (5 healthy + 12 degraded markers)
-10. `POST /oauth/token` (refresh_token) → rotated tokens
-11. `POST /mcp` without bearer → 401 with `WWW-Authenticate`
+curl https://meow.v244.net/.well-known/oauth-protected-resource
+# RFC 9728 metadata, resource=https://meow.v244.net/mcp
 
-## To deploy on OpenShip (ship.v244.net)
-
-Decision: **install SearchHub standalone as a custom app**; the 5 `find-*` Git MCPs
-keep running independently and are reached via env-var URLs.
-
-1. **Code is already on GitHub** at `github.com/kaka-sangi/searchhub-mcp`. OpenShip
-   clones from this repo on deploy.
-
-2. **Register as a custom app via `post_apps_custom`** with this skeleton:
-   ```json
-   {
-     "id": "searchhub",
-     "kind": "template",
-     "name": "SearchHub MCP",
-     "description": "OAuth 2.1-protected MCP aggregator for 13 search/research providers",
-     "category": "automation",
-     "tags": ["mcp", "search", "oauth"],
-     "endpoints": [{ "service": "searchhub", "port": 3000, "kind": "http" }],
-     "configFields": [
-       { "key": "ISSUER",             "service": "searchhub", "type": "text", "required": true,  "label": "Public URL of this instance" },
-       { "key": "JWT_SIGNING_SECRET", "service": "searchhub", "type": "text", "required": true,  "label": "HS256 signing secret (32+ chars)" },
-       { "key": "DEFAULT_SCOPES",     "service": "searchhub", "type": "text", "required": false, "default": "mcp:tools" },
-       { "key": "SEARCHHUB_ALLOW_SIGNUP", "service": "searchhub", "type": "text", "required": false, "default": "1" }
-     ],
-     "custom": true
-   }
-   ```
-
-3. **Install** via `post_apps`:
-   ```json
-   { "templateId": "searchhub", "name": "searchhub",
-     "routes": [{ "service": "searchhub", "port": 3000, "mode": "domain" }],
-     "config": { "ISSUER": "https://meow.v244.net", "JWT_SIGNING_SECRET": "<32+ random chars>" } }
-   ```
-   Capture the new projectId from the response — that's `<searchhub-project>` below.
-
-4. **Claim the domain** via `post_domains`:
-   ```json
-   { "hostname": "meow.v244.net", "projectId": "<searchhub-project>", "provider": "cloudflare", "autoConfigure": true }
-   ```
-   `autoConfigure: true` writes the CNAME through the `cred_cnUVqGgqqBiGJihs`
-   Cloudflare credential and OpenShip issues SSL. If `autoConfigure` isn't a
-   valid field on this version, fall back to `post_domains_by_id_dns_apply`
-   after the domain row is created.
-
-5. **Verify** the domain reaches the running container:
-   ```bash
-   curl -sS https://meow.v244.net/healthz
-   ```
-   Should return `{"ok":true,"providers":[13 ids]}`.
-
-6. **Smoke-test the OAuth flow** by pointing a browser at
-   `https://meow.v244.net/.well-known/oauth-authorization-server`,
-   then DCR + authorize + token + MCP initialize, mirroring the local flow.
-
-7. **Disable the `SEARCHHUB_ALLOW_SIGNUP=1` env** once your first user is
-   created (`patch_projects_by_id_env` to delete it, then redeploy).
-
-## To use SearchHub from OMP
-
-Add to `~/.omp/agent/mcp.json`:
-```json
-{
-  "mcpServers": {
-    "searchhub": {
-      "type": "http",
-      "url": "https://meow.v244.net/mcp",
-      "enabled": true
-    }
-  }
-}
+curl -X POST https://meow.v244.net/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}'
+# 401 + missing bearer (gate works)
 ```
 
-OMP will discover the metadata at `/.well-known/oauth-protected-resource`,
-prompt the user to log in via the browser, store the OAuth tokens in the
-vault (same `mcp_oauth:profile:default:<URL>` row pattern that already
-holds `mcp.exa.ai`), and mount all 13 aggregated tools under their
-`<provider>__<tool>` prefixed names.
+With a JWT access token from the OAuth flow:
+- `initialize` → `protocolVersion: 2024-11-05, server: searchhub-mcp 0.1.0`
+- `tools/list` → **18 tools** (10 healthy + 8 degraded markers):
+  - Healthy: exa (2), parallel (2), context7 (2), grep (1), deepwiki (3),
+    plus `_error` markers for the OpenShip internal URLs (camofox, koon,
+    google, openwebsearch, searxng) which are unreachable from this box,
+    and tavily/ydc/firecrawl which 401/404 on initialize (need
+    per-provider OAuth setup — see below).
 
-## To override the bundled upstream URLs
+## OAuth Login (browser-side)
 
-`SEARCHHUB_*_URL` env vars per `.env.example`. The 5 OpenShip children should
-be reachable via the internal Docker network as `http://proj_<id>:3000/mcp`,
-or via `host.docker.internal:<hostPort>` (20011–20015).
+Sign in to SearchHub via `https://meow.v244.net/.well-known/oauth-authorization-server`,
+then DCR → authorize → token. Existing admin user provisioned during deploy:
+```
+POST /admin/signup (one-time, with SEARCHHUB_ALLOW_SIGNUP=1)
+```
 
-## What's deliberately not done
+## Deployment Steps That Worked (final)
 
-- **JWT signing is HS256 (single secret).** Move to RS256 + JWKS rotation when
-  more than one SearchHub instance runs.
-- **Client secrets are stored in plaintext in `oauth_clients.client_secret_hash`.**
-  Hash with `scrypt` (helper already in `store.ts`) before production.
-- **Password hashing uses scrypt with N=16384.** Switch to argon2id if available.
-- **No session/refresh-token binding to client metadata** beyond the access
-  token's `jti`. Add DPoP or `cnf` claim when supporting refresh on mobile.
-- **No rate limiting / per-user quota.** Add a token-bucket middleware in
-  front of `/mcp` once you have user_id from the JWT.
-- **No UI for user self-signup.** Currently `SEARCHHUB_ALLOW_SIGNUP=1` exposes
-  `POST /admin/signup`. Disable once admin users are provisioned.
-- **Cloud provider credentials.** `parallel` will work with a literal key
-  via `PARALLEL_API_KEY` env; other cloud MCPs rely on the OMP-side auth
-  (exa = OAuth, tavily = sealed token, etc.) which is **not** yet plumbed
-  through to SearchHub — that needs an `exa_oauth_*` env or per-provider
-  vault lookup. Add as needed.
+1. **Push code to GitHub** at `github.com/kaka-sangi/searchhub-mcp` (done).
+2. **REST `POST /projects`** `{name, source:"git", repo:"kaka-sangi/searchhub-mcp", branch:"main"}`
+   → returns `projectId`. The MCP `post_projects` adapter rejects this body
+   shape — use the REST endpoint directly.
+3. **REST `POST /projects/{id}/git/link`** `{owner, repo, branch}` → enables
+   auto-deploy webhook. MCP adapter strips `owner`/`repo`; use REST.
+4. **REST `PATCH /projects/{id}/env`** with `environment: "production"`
+   and upsert each env var with `isSecret: true` for `JWT_SIGNING_SECRET`.
+5. **REST `PATCH /projects/{id}`** to set `framework: "docker-compose"`,
+   `dockerfile: "Dockerfile"`, `composePath: "docker-compose.yml"`,
+   `packageManager: "bun"`, `port: 3000`.
+6. **Push `docker-compose.yml` to the repo** with the build context, env,
+   and a named volume mount for `/app/data`.
+7. **REST `POST /deployments/{id}/redeploy`** to trigger the first build
+   using the docker-compose framework.
+8. **REST `POST /domains`** `{hostname, projectId, provider:"cloudflare"}`
+   to claim `meow.v244.net`. Verify via `POST /domains/{id}/verify` — it
+   re-confirms DNS and SSL.
+9. **REST `PATCH /projects/{id}/services/{sid}`** to set
+   `exposed: true, exposedPort: "3000", customDomain: "meow.v244.net"`.
+   This wires the edge → service route (the missing piece that initially
+   caused `openship-edge-unrouted`).
+10. **Smoke**: `curl https://meow.v244.net/healthz` returns 200 + 13 providers.
 
-## OpenShip-side answer summary
+## OpenShip Quirks Hit (and Worked Around)
 
-- **Shape:** standalone (children untouched).
-- **Domain:** `meow.v244.net` (Cloudflare-proxied, auto-config via the active
-  Cloudflare credential in OpenShip).
-- **OAuth:** RFC 7591 DCR + 7636 PKCE + 8414 + 9728 + 7009. JWT bearer.
-- **Hand-off point:** after this handoff doc — OpenShip deploy is gated on
-  the code being on `github.com/kaka-sangi/searchhub-mcp` (DONE).
+- **MCP adapter strips keys**: `post_projects` rejects `{name, source:...}`
+  even though the field name is `name` (zod schema OK) — the adapter
+  preprocesses the body differently. Use REST `POST /projects` with the
+  flat shape `{name, source:"git", repo:..., branch:...}`.
+- **`git/link` field-name mismatch**: MCP `post_projects_by_id_git_link`
+  ignores `owner` and `repo` keys; must use REST `POST /projects/{id}/git/link`.
+- **`post_apps_custom` is opaque**: the `Upload a JSON app definition`
+  error gives no usable hint. Skipped the custom-app registry entirely;
+  the docker-compose framework detector from the repo works fine.
+- **SQLite permission error**: the Dockerfile originally set `USER bun`
+  before the volume mount, so the named volume is owned by root and bun
+  can't write to `/app/data`. Fix: drop `USER bun`, `chmod 777 /app/data`
+  in the Dockerfile (running as root inside the container is fine in this
+  OpenShip sandbox).
+- **`openship-edge-unrouted` (404 on verified domain)**: domain was active
+  + SSL on, but the edge had no service routing entry. Fixed by exposing
+  the service: `PATCH .../services/{sid}` with `exposed: true, exposedPort,
+  customDomain`. Without this, the domain verified but no traffic reached
+  the container.
+
+## Hourly Health Watch
+
+`get_issues_summary` returns `outage: 3, actionRequired: 0, advisory: 2` —
+all 3 outages are **pre-existing on unrelated projects** (`firecrawl`,
+`@pylone/app`, `version-244`) and have been failing since before this
+deploy. **searchhub itself has zero issues.**
+
+## What's Deliberately Not Done
+
+- **Cloud provider credentials** — exa/tavily/ydc/firecrawl surface
+  `_error` markers when SearchHub tries to forward `tools/list` upstream.
+  Fix: add per-provider `Authorization` headers via env vars
+  (`EXA_OAUTH_TOKEN`, `TAVILY_API_KEY`, `YDC_API_KEY`, `FIRECRAWL_API_KEY`).
+  The OMP-side vault rows for `exa` already exist; mirror them through
+  to SearchHub's env via `PATCH /projects/{id}/env`.
+- **OpenShip children (`find-*` projects) are unreachable** from outside
+  the cluster. Their `_error` markers are expected. Either expose them
+  via OpenShip domains, or wire them as private connections to SearchHub
+  via `POST /projects/{id}/connections` and read `process.env` from
+  SearchHub.
+- **`SEARCHHUB_ALLOW_SIGNUP` is still `1`** for the first admin creation.
+  Remove it via `PATCH /projects/{id}/env` (delete the key) once admin
+  users are provisioned.
+- **HS256 JWT** + plaintext client-secret storage + scrypt password hash
+  — same dev-only choices as the local build. Migrate to RS256/JWKS +
+  scrypt client secrets + argon2id before adding more than a handful of
+  users.
+- **No rate limit / quota** — add a token-bucket middleware once you have
+  user_id from the JWT.
+
+## Files
+
+- Local source: `C:\Users\PC\find\searchhub-mcp`
+- GitHub: https://github.com/kaka-sangi/searchhub-mcp
+- OpenShip project: https://ship.v244.net/projects/proj_YJ6vi_WL9IN5FfAh
+- Live MCP endpoint: https://meow.v244.net/mcp
