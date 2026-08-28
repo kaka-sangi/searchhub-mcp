@@ -1,0 +1,21 @@
+services:
+  searchhub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000"
+    environment:
+      PORT: "3000"
+      DATA_DIR: "/app/data"
+      NODE_ENV: "production"
+      ISSUER: "https://meow.v244.net"
+      JWT_SIGNING_SECRET: "qN7hV2xK9bL4mP8sR3wT6yF1jD5gH0cE2aZ9nM7uB"
+      DEFAULT_SCOPES: "mcp:tools"
+      SEARCHHUB_ALLOW_SIGNUP: "1"
+    volumes:
+      - searchhub_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  searchhub_data:
