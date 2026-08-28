@@ -8,10 +8,9 @@ RUN bun install --frozen-lockfile || bun install
 FROM base AS run
 COPY --from=install /app/node_modules ./node_modules
 COPY . .
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chmod 777 /app/data
 ENV PORT=3000 \
     NODE_ENV=production \
     DATA_DIR=/app/data
 EXPOSE 3000
-USER bun
 CMD ["bun", "run", "src/server.ts"]
