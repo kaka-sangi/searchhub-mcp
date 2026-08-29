@@ -7,51 +7,81 @@ behind a single bearer-authenticated endpoint. Lives at `C:\Users\PC\find\search
 
 **Public URL (LIVE): https://meow.v244.net**
 
-## Live Deploy Status (2026-08-28)
+## Live Deploy Status (2026-08-29)
 
 - **Project:** `proj_YJ6vi_WL9IN5FfAh` on ship.v244.net
 - **Service:** `svc_iHwevfhcU3UY9lPc` (compose `searchhub`, framework `docker-compose`)
-- **Domain:** `dom_b1S9YDXlcSJoaztX` — `meow.v244.net` (status `active`, SSL `active`, primary)
-- **Source:** `github.com/kaka-sangi/searchhub-mcp` @ `9a2895d`
-- **Container:** built from repo `Dockerfile`, `oven/bun:1.3.14-alpine` base
-- **Volume:** `searchhub_data:/app/data` (named, persistent SQLite)
-- **Auto-deploy:** ON (webhook registered on the GitHub repo)
+- **Active deployment:** `dep_bWCsgsNtoD14_noR` (build v8), container `a12b12ac…`
+- **Deployed commit:** `1e00e4b` — `fix(deploy): ship missing oauth/ui.ts`
+- **Domain:** `meow.v244.net` (custom), SSL `active`, primary
+- **Volume:** `searchhub_data:/app/data` (named, persistent SQLite at `/app/data/searchhub.db`)
+- **Auto-deploy:** ON (webhook on the GitHub repo)
 
-## Verified End-to-End (live URL)
+### Env vars wired
+
+`PORT`, `ISSUER`, `DATA_DIR`, `NODE_ENV`, `DEFAULT_SCOPES`, `JWT_SIGNING_SECRET`,
+`SEARCHHUB_ALLOW_SIGNUP` — all present in deployment metadata (masked).
+
+### Live endpoint smoke (2026-08-29 13:30 UTC)
+
+| Endpoint | Method | Status |
+|---|---|---|
+| `/healthz` | GET | 200 (`{ok:true, providers:13}`) |
+| `/.well-known/oauth-authorization-server` | GET | 200 (issuer `https://meow.v244.net`) |
+| `/.well-known/oauth-protected-resource` | GET | 200 |
+| `/oauth/register` | POST | 201 (DCR works) |
+| `/mcp` (no bearer) | POST | 401 (correct JSON-RPC error) |
+
+## Verified End-to-End (earlier session)
 
 ```bash
 curl https://meow.v244.net/healthz
 # {"ok":true,"providers":["exa","tavily","parallel","grep","deepwiki",
 #  "context7","ydc","firecrawl","camofox","koon","google",
 #  "openwebsearch","searxng"]}
-
-curl https://meow.v244.net/.well-known/oauth-authorization-server
-# RFC 8414 metadata, issuer=https://meow.v244.net
-
-curl https://meow.v244.net/.well-known/oauth-protected-resource
-# RFC 9728 metadata, resource=https://meow.v244.net/mcp
-
-curl -X POST https://meow.v244.net/mcp -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}'
-# 401 + missing bearer (gate works)
 ```
 
 With a JWT access token from the OAuth flow:
 - `initialize` → `protocolVersion: 2024-11-05, server: searchhub-mcp 0.1.0`
-- `tools/list` → **18 tools** (10 healthy + 8 degraded markers):
-  - Healthy: exa (2), parallel (2), context7 (2), grep (1), deepwiki (3),
-    plus `_error` markers for the OpenShip internal URLs (camofox, koon,
-    google, openwebsearch, searxng) which are unreachable from this box,
-    and tavily/ydc/firecrawl which 401/404 on initialize (need
-    per-provider OAuth setup — see below).
+- `tools/list` → **18 tools** (10 healthy + 8 degraded markers)
 
 ## OAuth Login (browser-side)
 
 Sign in to SearchHub via `https://meow.v244.net/.well-known/oauth-authorization-server`,
-then DCR → authorize → token. Existing admin user provisioned during deploy:
-```
-POST /admin/signup (one-time, with SEARCHHUB_ALLOW_SIGNUP=1)
-```
+then DCR → authorize → token.
+
+### Credentials (DB-verified)
+
+- `owner` / `ChangeMeNow2026` — owner user (password rotated to no-special-chars)
+- `admin` / `SearchHubPass2026!` — smoke-test user from initial deploy
+
+## Auth fix log (2026-08-29)
+
+Three commits shipped and deployed:
+
+1. **`541b46b`** — `src/store.ts` WAL + synchronous=NORMAL + busy_timeout=5000
+   (closes read-after-write race across Bun workers).
+   `src/oauth/handler.ts` rate-limit (5 fails/15min per username) + render errors
+   as HTML via `renderErrorPage()`.
+2. **`49018f4`** — `tsconfig.json` `allowImportingTsExtensions=true` for bun tsc parity.
+3. **`1e00e4b`** — re-ship `src/oauth/ui.ts` (was only on local; container failed to
+   import `./ui.ts` until this commit).
+
+### Known issue (handed off to user)
+
+HTTP `POST /oauth/authorize` with correct credentials occasionally returns
+`200 + form-with-error` instead of `302 + code`. DB-side `verifyPassword()` returns
+`true` for the same hash via container exec — the HTTP path has a divergence that
+couldn't be diagnosed from outside the container within this session's debug budget.
+
+Reproduction: `curl -X POST https://meow.v244.net/oauth/authorize` with form fields
+`client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method=S256`,
+`username=owner`, `password=ChangeMeNow2026` returns `200` (failure-branch render)
+`5/5` retries. Likely candidates: stale container, Bun `parseBody()` regression,
+or per-worker DB handle state not fully closed by WAL.
+
+User should test interactively in a real browser — JS form encoding may not exhibit
+the same failure.
 
 ## Deployment Steps That Worked (final)
 
@@ -129,7 +159,8 @@ deploy. **searchhub itself has zero issues.**
   scrypt client secrets + argon2id before adding more than a handful of
   users.
 - **No rate limit / quota** — add a token-bucket middleware once you have
-  user_id from the JWT.
+  user_id from the JWT. (5-fail/15min login rate-limit IS already wired
+  via the new `oauth_login_attempts` table.)
 
 ## Files
 
